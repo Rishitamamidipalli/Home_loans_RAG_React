@@ -639,11 +639,56 @@ def render_chat_interface():
                 st.error(error_msg)
         
         st.rerun()
-
-#Display the agent results
 def render_results():
-    st.title("Application Processing Results")
+    # Set page config (if not already set elsewhere)
+    st.set_page_config(layout="wide", page_title="Loan Application Results")
     
+    # Custom CSS for better styling
+    st.markdown("""
+    <style>
+        .card {
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+            transition: transform 0.2s;
+        }
+        .card:hover {
+            transform: translateY(-5px);
+        }
+        .success-card {
+            background-color: #e8f5e9;
+            border-left: 5px solid #4caf50;
+        }
+        .warning-card {
+            background-color: #fff8e1;
+            border-left: 5px solid #ffc107;
+        }
+        .error-card {
+            background-color: #ffebee;
+            border-left: 5px solid #f44336;
+        }
+        .info-card {
+            background-color: #e3f2fd;
+            border-left: 5px solid #2196f3;
+        }
+        .metric-card {
+            padding: 15px;
+            border-radius: 8px;
+            background-color: #f5f5f5;
+        }
+        .stProgress > div > div > div > div {
+            background-color: #4caf50;
+        }
+        .st-eb {
+            padding: 0px;
+        }
+        .tab-content {
+            padding: 15px 0;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+
     if 'workflow_result' not in st.session_state:
         st.error("No results available")
         if st.button("← Back to Application"):
@@ -652,17 +697,6 @@ def render_results():
         return
     
     result = st.session_state.workflow_result
-    
-    # First, verify the structure of the result
-    # if not isinstance(result, dict) or "results" not in result:
-    #     st.error("Invalid results format received")
-    #     st.json(result)  # Show the actual result for debugging
-    #     if st.button("← Back to Application"):
-    #         st.session_state.current_view = "chat"
-    #         st.rerun()
-    #     return
-    
-    # Safely get the results with defaults
     results = result.get("results", {})
     doc_result = results.get("document_validation", {})
     credit_result = results.get("credit_score", {})
@@ -670,274 +704,312 @@ def render_results():
     elig_result = results.get("eligibility", {})
     rec_result = results.get("approval_recommendation", {})
 
+    # Main header with status
+    st.title("📊 Loan Application Dashboard")
     
+    # Overall application status card
+    overall_status = "Pending"
+    status_color = "#FFC107"
+    if elig_result.get("is_eligible", False):
+        overall_status = "Approved"
+        status_color = "#4CAF50"
+    elif elig_result.get("is_eligible", False) is False:
+        overall_status = "Rejected"
+        status_color = "#F44336"
+    token = st.session_state.get('upload_token', '')
+    clean_token_val = clean_token(token)
+    s3_manager = S3ApplicationManager()
+    app_data = s3_manager.get_application(clean_token_val)
+    st.markdown(f"""
+    <div class="card" style="border-left: 5px solid {status_color};">
+        <h3 style="margin-top:0;">Application Status: <span style="color:{status_color};">{overall_status}</span></h3>
+        <div style="display: flex; justify-content: space-between;">
+            <div>
+                <p><strong>Application ID:</strong> {st.session_state.get('upload_token', 'N/A')}</p>
+                <p><strong>Date:</strong> {datetime.now().strftime('%Y-%m-%d')}</p>
+            </div>
+            <div>
+                <p><strong>Applicant:</strong> {app_data.get('full_name', 'N/A')}</p>
+                <p><strong>Loan Amount:</strong> ₹{app_data.get('loan_amount', 0):,}</p>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Key metrics row
+    st.subheader("📈 Key Metrics")
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.markdown(f"""
+        <div class="metric-card">
+            <h4 style="margin:0; color:#2196F3;">Credit Score</h4>
+            <h2 style="margin:0;">{credit_result.get('credit_score', 'N/A')}</h2>
+            <p style="margin:0; font-size:12px;">{credit_result.get('score_category', '')}</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown(f"""
+        <div class="metric-card">
+            <h4 style="margin:0; color:#4CAF50;">Property Value</h4>
+            <h2 style="margin:0;">₹{prop_result.get('estimated_property_value', 0):,}</h2>
+            <p style="margin:0; font-size:12px;">{prop_result.get('price_per_sqft', 0):,}/sq.ft</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col3:
+        max_eligible = float(rec_result["recommendation"].split("maximum LTV-eligible loan amount is ₹")[1].split(" ")[0].replace(",",""))
+        st.markdown(f"""
+        <div class="metric-card">
+            <h4 style="margin:0; color:#9C27B0;">Loan Eligibility</h4>
+            <h2 style="margin:0;">₹{max_eligible:,.2f}</h2>
+            <p style="margin:0; font-size:12px;">Max amount</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col4:
+        st.markdown(f"""
+        <div class="metric-card">
+            <h4 style="margin:0; color:#FF9800;">Risk Level</h4>
+            <h2 style="margin:0;">{elig_result.get('risk_level', 'Medium')}</h2>
+            <p style="margin:0; font-size:12px;">Based on profile</p>
+        </div>
+        """, unsafe_allow_html=True)
+
     # Results navigation tabs
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-        "📄 Document Validation", 
-        "💳 Credit Score",
-        "🏠 Property Valuation",
-        "✅ Eligibility", 
-        "💳 Recommendation",
-        "All data"
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "📋 Application Overview", 
+        "📄 Documents", 
+        "🏠 Property", 
+        "💳 Credit", 
+        "✅ Recommendations"
     ])
         
     with tab1:
-        st.subheader("📄 Document Validation Results")
+        st.subheader("Application Summary")
+        
+        # Progress tracker
+        st.markdown("### 📌 Application Progress")
+        steps = ["Document Verification", "Credit Check", "Property Valuation", "Eligibility", "Approval"]
+        current_step = 4 if overall_status == "Approved" else 3
+        st.progress(current_step/4)
+        
+        cols = st.columns(5)
+        for i, step in enumerate(steps):
+            with cols[i]:
+                if i <= current_step:
+                    st.success(f"✓ {step}")
+                else:
+                    st.info(step)
+        # Quick stats
+        st.subheader("📊 Quick Statistics")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+    
+            with st.expander("📝 Application Details", expanded=True):
+                token = st.session_state.get('upload_token', '')
+                clean_token_val = clean_token(token)
+                s3_manager = S3ApplicationManager()
+                app_data = s3_manager.get_application(clean_token_val)
+                st.write(f"**Loan Amount Requested:** ₹{app_data.get('loan_amount', 0):,}")
+                st.write(f"**Loan Purpose:** {app_data.get('purpose_of_loan', 'N/A')}")
+                st.write(f"**Employment Type:** {app_data.get('employment_status', 'N/A')}")
+                st.write(f"**Monthly Income:** ₹{app_data.get('monthly_income', 0):,}")
+        
+        with col2:
+            with st.expander("🔍 Eligibility Summary", expanded=True):
+                st.write(f"**Eligibility Status:** {'✅ Eligible' if elig_result.get('is_eligible') else '❌ Not Eligible'}")
+                max_eligible = float(rec_result["recommendation"].split("maximum LTV-eligible loan amount is ₹")[1].split(" ")[0].replace(",",""))
+                st.write(f"**Maximum Eligible Amount:** ₹{max_eligible:,.2f}")
+                recommended_amount = float(rec_result["table"][2]["loan_amount"].replace("₹","").replace(",",""))
+                st.write(f"**Recommended Loan Amount:** ₹{recommended_amount:,.2f}")
+                st.write(f"**Risk Assessment:** {credit_result['risk_assessment']['risk_level'].title()} (Score: {credit_result['risk_assessment']['risk_score']})")
+
+    with tab2:
+        st.subheader("Document Verification")
         
         if not doc_result:
             st.warning("No document validation results available")
         else:
-            # Display overall status with appropriate color and message
-            status = doc_result.get("status", "unknown").lower()
+            # Document cards
+            doc_types = {
+                "PAN": {"icon": "🆔", "title": "PAN Card"},
+                "Aadhaar": {"icon": "🆔", "title": "Aadhaar Card"},
+                "Payslip": {"icon": "💰", "title": "Salary Slip"},
+                "CompanyID": {"icon": "🏢", "title": "Employment Proof"}
+            }
             
-            if status == "success":
-                st.success("✅ All documents validated successfully!")
-            elif status == "partial_success":
-                # Check if we have validation report to determine more specific message
-                validation_report = doc_result.get("validation_report", {})
-                if validation_report.get("overall_status") == "Failure":
-                    st.warning("⚠️ Document validation completed with some critical issues")
-                else:
-                    st.warning("⚠️ Document validation completed with minor issues")
-            else:
-                st.error("❌ Document validation failed")
-            
-            # Always display extracted document data
-            if "data" in doc_result:
-                st.markdown("**📋 Consolidated Information:**")
-                data = doc_result["data"]
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.write(f"**Applicant Name:** {data.get('applicant_name', 'N/A')}")
-                    st.write(f"**Date of Birth:** {data.get('date_of_birth', 'N/A')}")
-                with col2:
-                    st.write(f"**PAN Number:** {data.get('pan_number', 'N/A')}")
-                    st.write(f"**Company:** {data.get('company_name', 'N/A')}")
-                    st.write(f"**Monthly Salary:** ₹{data.get('gross_monthly_salary', 0):,}")
-            
-            # Display detailed document sections
-            raw_data = doc_result.get("raw_data", {})
-            if raw_data:
-                st.markdown("**📄 Document Details:**")
-                
-                # PAN Card Section
-                if "PAN" in raw_data and raw_data["PAN"]:
-                    with st.expander("🆔 PAN Card Information", expanded=False):
-                        pan_data = raw_data["PAN"]
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.write(f"**Name:** {pan_data.get('name', 'N/A')}")
-                            st.write(f"**PAN Number:** {pan_data.get('pan_number', 'N/A')}")
-                        with col2:
-                            st.write(f"**Date of Birth:** {pan_data.get('date_of_birth', 'N/A')}")
-                
-                # Aadhaar Card Section
-                if "Aadhaar" in raw_data and raw_data["Aadhaar"]:
-                    with st.expander("🆔 Aadhaar Card Information", expanded=False):
-                        aadhaar_data = raw_data["Aadhaar"]
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.write(f"**Name:** {aadhaar_data.get('name', 'N/A')}")
-                        with col2:
-                            st.write(f"**Date of Birth:** {aadhaar_data.get('date_of_birth', 'N/A')}")
-                
-                # Company ID Section
-                if "CompanyID" in raw_data and raw_data["CompanyID"]:
-                    with st.expander("🏢 Company ID Information", expanded=False):
-                        company_data = raw_data["CompanyID"]
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.write(f"**Name:** {company_data.get('name', 'N/A')}")
-                            st.write(f"**Company:** {company_data.get('company', 'N/A')}")
-                        with col2:
-                            status = "✅ Valid" if company_data.get('is_valid') else "❌ Invalid"
-                            st.write(f"**Validity Status:** {status}")
-                            if not company_data.get('is_valid'):
-                                st.warning("Company ID validation failed")
-                
-                # Payslip Section
-                if "Payslip" in raw_data and raw_data["Payslip"]:
-                    with st.expander("💰 Payslip Information", expanded=False):
-                        payslip_data = raw_data["Payslip"]
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.write(f"**Name:** {payslip_data.get('name', 'N/A')}")
-                            st.write(f"**PAN Number:** {payslip_data.get('pan_number', 'N/A')}")
-                        with col2:
-                            st.write(f"**Monthly Salary:** ₹{payslip_data.get('gross_monthly_salary', 0):,}")
-                            status = "✅ Recent" if payslip_data.get('is_recent') else "⚠️ Not Recent"
-                            st.write(f"**Recency Status:** {status}")
-                            if not payslip_data.get('is_recent'):
-                                st.warning("Payslip is not recent")
-            
-            # Display detailed validation report
-            validation_report = doc_result.get("validation_report", {})
-            if validation_report and validation_report.get("checks"):
-                st.markdown("**🔍 Validation Checks:**")
-                
-                for check in validation_report.get("checks", []):
-                    if isinstance(check, dict):
-                        check_name = check.get("check", "Unknown Check")
-                        check_status = check.get("status", "Unknown").lower()
-                        check_value = check.get("value", "")
-                        check_reason = check.get("reason", "")
+            for doc_type, doc_meta in doc_types.items():
+                doc_data = doc_result.get("raw_data", {}).get(doc_type, {})
+                if doc_data:
+                    status = "✅ Verified" if doc_data.get("is_valid", True) else "❌ Issues Found"
+                    card_class = "success-card" if doc_data.get("is_valid", True) else "error-card"
+                    
+                    with st.expander(f"{doc_meta['icon']} {doc_meta['title']} - {status}", expanded=False):
+                        st.markdown(f"""
+                        <div class="card {card_class}">
+                            <div style="display: flex; justify-content: space-between;">
+                                <div>
+                                    <p><strong>Status:</strong> {status}</p>
+                                    <p><strong>Name:</strong> {doc_data.get('name', 'N/A')}</p>
+                                </div>
+                                <div>
+                                    <p><strong>Validity:</strong> {'Valid' if doc_data.get('is_valid', True) else 'Invalid'}</p>
+                                    {f"<p><strong>Date of Birth:</strong> {doc_data.get('date_of_birth', 'N/A')}</p>" if doc_type in ["PAN", "Aadhaar"] else "<p></p>"}
+                                </div>
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
                         
-                        # Create container for each check
-                        with st.container():
-                            cols = st.columns([1, 4])
-                            
-                            # Status icon
-                            with cols[0]:
-                                if check_status == "success":
-                                    st.success("✅")
-                                elif check_status == "warning":
-                                    st.warning("⚠️")
-                                else:
-                                    st.error("❌")
-                            
-                            # Check details
-                            with cols[1]:
-                                st.write(f"**{check_name}**")
-                                if check_value:
-                                    st.write(f"Value: `{check_value}`")
-                                if check_reason:
-                                    st.write(f"*{check_reason}*")
-                        
-                        st.divider()
+                        # Show validation details if available
+                        if "validation_notes" in doc_data:
+                            st.markdown("**Validation Notes:**")
+                            st.info(doc_data["validation_notes"])
 
-    with tab2:
-        st.subheader("Credit Score")
-        # st.write(credit_result)
-        if not credit_result:
-            st.warning("No credit score results available")
-        elif credit_result.get("status") == "completed":
-            st.success("✅ Credit score is good")
-        else:
-            st.error("❌ Credit score is low")
-            st.error(credit_result.get("message", "Unknown error"))
-        print(credit_result.get("credit_score", {}))
-        st.json({
-                "Credit Score": credit_result.get("credit_score", "N/A"),
-                "Credit Score Category": credit_result.get("score_category", "N/A"),
-            })
-        
-            
-            
     with tab3:
-        with st.expander("🏠 Property Information", expanded=True):
-                # Try to get property details from the structured data first
-                property_details = prop_result.get("property_data", {})
-                
-                if property_details:
-                    property_data = {
-                        "Property Size": f"{property_details.get('size_sqft', 0):,} sq.ft",
-                        "Property Type": property_details.get("property_type", "N/A"),
-                        "City": property_details.get("city", "N/A"),
-                        "Area": property_details.get("area", "N/A"),
-                        "Property Age": f"{property_details.get('age_years', 0)} years",
-                        "Property Condition": property_details.get("condition", "N/A")
-                    }
-                    for key, value in property_data.items():
-                        st.write(f"**{key}:** {value}")
-        
-        # Display valuation results            
-        estimated_value = prop_result.get("estimated_property_value", 0)
-        price_per_sqft = prop_result.get("price_per_sqft", 0)
-        confidence_score = prop_result.get("confidence_score", 0)
-        valuation_method = prop_result.get("valuation_method", "Unknown")
-        
-        # Calculate range based on confidence
-        if confidence_score >= 0.9:
-            variation_percent = 0.05  # ±5% for high confidence
-        elif confidence_score >= 0.8:
-            variation_percent = 0.08  # ±8% for medium confidence
-        else:
-            variation_percent = 0.12  # ±12% for lower confidence
-
-        min_value = int(estimated_value * (1 - variation_percent))
-        max_value = int(estimated_value * (1 + variation_percent))
-        min_price_sqft = int(price_per_sqft * (1 - variation_percent))
-        max_price_sqft = int(price_per_sqft * (1 + variation_percent))
-
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric(
-                label="🏠 Estimated Value Range",
-                value=f"₹{estimated_value:,}",
-                delta=f"±₹{int(estimated_value * variation_percent):,}"
-            )
-            st.caption(f"Range: ₹{min_value:,} - ₹{max_value:,}")
-        with col2:
-            st.metric(
-                label="📏 Price per sqft Range",
-                value=f"₹{price_per_sqft:,}",
-                delta=f"±₹{int(price_per_sqft * variation_percent):,}"
-            )
-            st.caption(f"Range: ₹{min_price_sqft:,} - ₹{max_price_sqft:,}")
-        with col3:
-            st.metric(
-                label="🎯 Confidence",
-                value=f"{confidence_score:.1%}",
-                delta=None
-            )
-
-        st.markdown("### 📋 Valuation Details")
-        col1, col2 = st.columns(2)
-        with col1:
-            st.info(f"**🤖 Method:** {valuation_method}")
-            if result.get('model_accuracy'):
-                st.info(f"**📊 Model Accuracy:** {result['model_accuracy']:.1%}")
-            st.info(f"**📈 Variation Range:** ±{variation_percent*100:.0f}%")
-            st.info(f"**💡 Why Range?** Property values vary based on market conditions, timing, and buyer preferences.")
-        with col2:
-            st.success("✅ Valuation result processed successfully!")
         st.subheader("Property Valuation")
         
         if not prop_result:
             st.warning("No property valuation results available")
-        elif prop_result.get("status") == "success":
+        else:
             col1, col2 = st.columns(2)
-            with col1:
-                st.metric("Estimated Property Value", 
-                         f"₹{prop_result.get('estimated_property_value', 0):,}",
-                         help="Valuation based on property details and market data")
-            with col2:
-                st.metric("Price per Sq.Ft", 
-                         f"₹{prop_result.get('price_per_sqft', 0):,}",
-                         help="Calculated value per square foot")
             
-            st.markdown("**Valuation Factors:**")
-            form_data = st.session_state.get('form_data', {})
-            st.write("- Property Size: {} sq.ft".format(
-                form_data.get("property_size_sqft", "N/A")))
-            st.write("- Location: {}, {}".format(
-                form_data.get("property_location_city", "N/A"),
-                form_data.get("property_location_area", "N/A")))
-        else:
-            st.error("Property valuation failed")
-            st.error(prop_result.get("message", "Unknown error"))
-    
-    with tab4:
-        st.subheader("Eligibility Results")
-        
-        if not elig_result:
-            st.warning("No eligibility results available")
-        elif elig_result.get("is_eligible"):
-            st.success("✅ Congratulations! You are eligible for the loan")
-           
-        else:
-            st.error("❌ Not eligible based on current information")
-        
-        st.markdown("**Eligibility Criteria:**")
-        print('Hi')
-        print(elig_result)
-        for check_name, check_result in elig_result.get("checks", {}).items():
-            status = "Success" if check_result in ["Yes", True] else "Failed"
-            if status == "Success":
-                st.success(f"✓ {check_name}")
-            else:
-                st.error(f"✗ {check_name}: Failed")
+            with col1:
+                st.markdown("""
+                <div class="card info-card">
+                    <h3 style="margin-top:0;">🏡 Property Details</h3>
+                    <div style="display: flex; justify-content: space-between;">
+                        <div>
+                            <p><strong>Location:</strong> {}</p>
+                            <p><strong>Type:</strong> {}</p>
+                        </div>
+                        <div>
+                            <p><strong>Size:</strong> {} sq.ft</p>
+                            <p><strong>Age:</strong> {} years</p>
+                        </div>
+                    </div>
+                </div>
+                """.format(
+                    f"{prop_result.get('property_data', {}).get('city', 'N/A')}, {prop_result.get('property_data', {}).get('area', 'N/A')}",
+                    prop_result.get('property_data', {}).get('property_type', 'N/A'),
+                    prop_result.get('property_data', {}).get('size_sqft', 'N/A'),
+                    prop_result.get('property_data', {}).get('age_years', 'N/A')
+                ), unsafe_allow_html=True)
+                
+                st.markdown("""
+                <div class="card" style="margin-top:20px;">
+                    <h3 style="margin-top:0;">📊 Valuation Method</h3>
+                    <p><strong>Approach:</strong> {}</p>
+                    <p><strong>Confidence:</strong> {:.0f}%</p>
+                    <p><strong>Market Comparison:</strong> {}</p>
+                </div>
+                """.format(
+                    prop_result.get('valuation_method', 'Automated Valuation Model (AVM)'),
+                    prop_result.get('confidence_score', 0) * 100,
+                    "Used comparable properties" if prop_result.get('used_comparables', False) else "No direct comparables"
+                ), unsafe_allow_html=True)
+            
+            with col2:
+                token = st.session_state.get('upload_token', '')
+                clean_token_val = clean_token(token)
+                s3_manager = S3ApplicationManager()
+                app_data = s3_manager.get_application(clean_token_val)
+                st.markdown("""
+                <div class="card success-card">
+                    <h3 style="margin-top:0;">💰 Valuation Summary</h3>
+                    <div style="text-align: center;">
+                        <h1 style="margin:10px 0; color:#4CAF50;">₹{:,}</h1>
+                        <p>Estimated Property Value</p>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; margin-top:15px;">
+                        <div style="text-align: center;">
+                            <h3 style="margin:5px 0;">₹{:,}</h3>
+                            <p>Per Sq.Ft</p>
+                        </div>
+                        <div style="text-align: center;">
+                            <h3 style="margin:5px 0;">{:,}</h3>
+                            <p>Sq.Ft</p>
+                        </div>
+                        <div style="text-align: center;">
+                            <h3 style="margin:5px 0;">{:.0f}%</h3>
+                            <p>LTV Ratio</p>
+                        </div>
+                    </div>
+                </div>
+                """.format(
+                    prop_result.get('estimated_property_value', 0),
+                    prop_result.get('price_per_sqft', 0),
+                    prop_result.get('property_data', {}).get('size_sqft', 0),
+                    (app_data.get('loan_amount', 0) / app_data.get('property_value', 1)) * 100
+                ), unsafe_allow_html=True)
+                
+                # Valuation range visualization
+                min_val = int(prop_result.get('estimated_property_value', 0) * 0.95)
+                max_val = int(prop_result.get('estimated_property_value', 0) * 1.05)
+                st.markdown(f"""
+                <div style="margin-top:20px;">
+                    <h4>Valuation Range</h4>
+                    <div style="background: #f5f5f5; padding:10px; border-radius:5px;">
+                        <div style="display:flex; justify-content:space-between; margin-bottom:5px;">
+                            <span>₹{min_val:,}</span>
+                            <span>₹{max_val:,}</span>
+                        </div>
+                        <div style="height:10px; background:linear-gradient(90deg, #f44336, #ffeb3b, #4caf50); border-radius:5px; position:relative;">
+                            <div style="position:absolute; left:50%; top:-5px; width:2px; height:20px; background:#000;"></div>
+                        </div>
+                        <div style="text-align:center; margin-top:5px;">
+                            <span>₹{prop_result.get('estimated_property_value', 0):,}</span>
+                        </div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
 
+    with tab4:
+        st.subheader("Credit Analysis")
+        
+        if not credit_result:
+            st.warning("No credit score results available")
+        else:
+            score = credit_result.get('credit_score', 0)
+            score_category = credit_result.get('score_category', 'Average')
+            
+            if score >= 750:
+                color = "#4CAF50"  # Green
+            elif score >= 650:
+                color = "#8BC34A"  # Light green
+            elif score >= 550:
+                color = "#FFC107"  # Yellow
+            else:
+                color = "#F44336"  # Red
+            
+            st.markdown(f"""
+            <div class="card" style="text-align:center;">
+                <h3 style="margin-top:0;">Your Credit Score</h3>
+                <div style="width:150px; height:150px; margin:0 auto; border-radius:50%; 
+                    background:conic-gradient({color} 0% {score/10}%, #e0e0e0 {score/10}% 100%);
+                    display:flex; align-items:center; justify-content:center;">
+                    <div style="background:white; width:120px; height:120px; border-radius:50%; 
+                        display:flex; align-items:center; justify-content:center;">
+                        <h1 style="margin:0; color:{color};">{score}</h1>
+                    </div>
+                </div>
+                <h3 style="color:{color};">{score_category}</h3>
+                <p>{credit_result.get('score_message', '')}</p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        if score < 700:
+            with st.expander("💡 Credit Improvement Tips", expanded=True):
+                st.markdown("""
+                - **Pay bills on time:** Set up automatic payments for at least the minimum amount due
+                - **Reduce credit utilization:** Aim to use less than 30% of your available credit
+                - **Avoid new credit applications:** Each hard inquiry can slightly lower your score
+                - **Check for errors:** Review your credit report annually for inaccuracies
+                - **Keep old accounts open:** Longer credit history improves your score
+                    """)
+    
     with tab5:
     
         st.subheader("Loan Recommendation")
@@ -1030,29 +1102,18 @@ def render_results():
         else:
             st.error("Recommendation generation failed")
             st.error(rec_result.get("message", "Unknown error"))
-
-    with tab6:
-        st.subheader("All data")
-        st.write(result)
-        
-    # Navigation buttons
-    st.divider()
-    col1, col2 = st.columns(2)
+    
+    
+    # Footer with navigation
+    st.markdown("---")
+    col1, col2 = st.columns([2,1])
     with col1:
+        pass
+    with col2:
         if st.button("← Back to Application", use_container_width=True):
             st.session_state.current_view = "chat"
             st.rerun()
-    with col2:
-        if st.button("🔄 Start New Application", use_container_width=True, type="primary"):
-            # Reset session state
-            for key in ['form_data', 'workflow_result', 'current_view', 'upload_token']:
-                if key in st.session_state:
-                    del st.session_state[key]
-            st.session_state.current_view = "chat"
-            st.rerun()
-
-
-
+    
 
 def main():
     st.title("Home Loan Assistant")
