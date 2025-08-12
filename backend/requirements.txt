@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+python-multipart
+pydantic
+python-jose[cryptography]
+passlib[bcrypt]
+boto3
+langchain
+langchain-aws
+langchain-core
+streamlit
+graphviz
+python-dotenv

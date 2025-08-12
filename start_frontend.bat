@@ -1,0 +1,9 @@
+@echo off
+echo Starting Home Loan Assistant Frontend...
+cd frontend
+echo Installing dependencies...
+npm install
+echo.
+echo Dependencies installed!
+echo Starting React development server...
+npm start

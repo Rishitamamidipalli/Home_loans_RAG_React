@@ -1,4 +1,22 @@
+# Python / FastAPI
 my_env/
+__pycache__/
+*.pyc
+.env
+*.log
+backend/venv/
+
+# Node / React
+node_modules/
+build/
+dist/
+.DS_Store
+npm-debug.log*
+yarn-error.log
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
 .env
 __pycache__/
 *.pyc
