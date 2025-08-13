@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Paper,
@@ -6,11 +6,11 @@ import {
   Button,
   List,
   ListItem,
+  ListItemIcon,
   ListItemText,
-  ListItemSecondaryAction,
   IconButton,
+  CircularProgress,
   Alert,
-  LinearProgress,
   Card,
   CardContent,
   Chip,
@@ -25,38 +25,45 @@ import {
 import { useAppStore } from '../store/appStore';
 import { uploadDocument, listDocuments, deleteDocument } from '../services/api';
 
+interface UploadedDocument {
+  filename: string;
+  document_type: string;
+  s3_path: string;
+}
+
+const requiredDocuments = [
+  { name: 'Pay Slips', description: 'Recent pay stubs (last 2-3 months)', required: true },
+  { name: 'Aadhaar Card', description: 'Aadhaar card', required: true },
+  { name: 'Company ID Proof', description: 'Company ID proof', required: true },
+  { name: 'Pan Card', description: 'Pan card', required: false },
+];
+
 const DocumentUpload: React.FC = () => {
-  const { sessionId, uploadedDocuments, setUploadedDocuments } = useAppStore();
+  const { sessionId, uploadToken } = useAppStore();
+  const token = uploadToken || sessionId; // Use uploadToken if available, otherwise sessionId
+  const [uploadedDocuments, setUploadedDocuments] = useState<UploadedDocument[]>([]);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const [token] = useState(`TOKEN_${sessionId}`); // Generate token based on session
 
-  const requiredDocuments = [
-    { name: 'Pay Stubs', description: 'Recent pay stubs (last 2-3 months)', required: true },
-    { name: 'Tax Returns', description: 'Last 2 years of tax returns', required: true },
-    { name: 'Bank Statements', description: 'Last 2-3 months of bank statements', required: true },
-    { name: 'Employment Letter', description: 'Letter of employment verification', required: true },
-    { name: 'Credit Report', description: 'Recent credit report', required: false },
-    { name: 'Property Documents', description: 'Purchase agreement or property details', required: false },
-  ];
+  const loadDocuments = useCallback(async () => {
+    if (!token) return;
+    try {
+      const docs = await listDocuments(token);
+      setUploadedDocuments(docs.map((doc: any) => ({ filename: doc.filename, document_type: doc.document_type, s3_path: doc.s3_path })));
+    } catch (err) {
+      setError('Failed to load document list.');
+      console.error('Failed to load documents:', err);
+    }
+  }, [token]);
 
   useEffect(() => {
     loadDocuments();
-  }, []);
-
-  const loadDocuments = async () => {
-    try {
-      const docs = await listDocuments(token);
-      setUploadedDocuments(docs);
-    } catch (err) {
-      console.error('Failed to load documents:', err);
-    }
-  };
+  }, [loadDocuments]);
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
-    if (!files || files.length === 0) return;
+    if (!files || files.length === 0 || !token) return;
 
     setUploading(true);
     setError(null);
@@ -64,225 +71,151 @@ const DocumentUpload: React.FC = () => {
 
     try {
       for (const file of Array.from(files)) {
-        await uploadDocument(file, sessionId, token);
+        await uploadDocument(file, token, file.name.split('.')[0]);
       }
-      
-      setSuccess(`Successfully uploaded ${files.length} file(s)`);
+      setSuccess(`Successfully uploaded ${files.length} file(s).`);
       await loadDocuments();
-      
-      // Clear the input
-      event.target.value = '';
-      
     } catch (err) {
       setError('Failed to upload documents. Please try again.');
       console.error('Upload error:', err);
     } finally {
       setUploading(false);
+      // Clear the input
+      if (event.target) {
+        event.target.value = '';
+      }
     }
   };
 
   const handleDeleteDocument = async (filename: string) => {
+    if (!token) return;
     try {
-      await deleteDocument(token, filename);
-      setSuccess(`Deleted ${filename}`);
-      await loadDocuments();
+      await deleteDocument(filename, token);
+      setSuccess(`Successfully deleted ${filename}.`);
+      await loadDocuments(); // Refresh the list
     } catch (err) {
-      setError(`Failed to delete ${filename}`);
+      setError(`Failed to delete ${filename}.`);
       console.error('Delete error:', err);
     }
   };
 
-  const getDocumentStatus = (docType: string) => {
-    const hasDoc = uploadedDocuments.some(doc => 
-      doc.toLowerCase().includes(docType.toLowerCase().replace(' ', ''))
+  const isDocumentUploaded = (docName: string) => {
+    const formattedDocName = docName.replace(/\s+/g, '_').toLowerCase();
+    return uploadedDocuments.some(doc => 
+      doc.document_type.toLowerCase().includes(formattedDocName)
     );
-    return hasDoc;
   };
 
-  const formatFileSize = (bytes: number) => {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-  };
-
-  return (
-    <Box sx={{ maxWidth: 1000, mx: 'auto' }}>
-      {/* Header */}
-      <Paper sx={{ p: 3, mb: 3, backgroundColor: 'primary.main', color: 'white' }}>
-        <Typography variant="h4" component="h1" sx={{ fontWeight: 'bold', mb: 1 }}>
-          📁 Document Upload
+  if (!token) {
+    return (
+      <Paper sx={{ p: 3, textAlign: 'center' }}>
+        <Typography variant="h6" color="error">
+          Application Token Not Found
         </Typography>
-        <Typography variant="body1" sx={{ opacity: 0.9 }}>
-          Upload required documents for your loan application
+        <Typography color="text.secondary">
+          Please go back to the chat and provide your application token to proceed.
         </Typography>
       </Paper>
+    );
+  }
+
+  return (
+    <Box sx={{ p: 2 }}>
+      <Typography variant="h5" gutterBottom>
+        Document Upload
+      </Typography>
+      {token && (
+        <Typography color="text.secondary" gutterBottom>
+          Application ID: {uploadToken ? `HL${uploadToken.split('_')[1]}` : token}
+        </Typography>
+      )}
+      {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+      {success && <Alert severity="success" sx={{ mb: 2 }}>{success}</Alert>}
 
       <Grid container spacing={3}>
-        {/* Upload Section */}
+        {/* Upload Area */}
         <Grid item xs={12} md={6}>
-          <Card>
-            <CardContent>
-              <Typography variant="h6" sx={{ mb: 2, color: 'primary.main' }}>
-                Upload Documents
+          <Card component={Paper} elevation={2} sx={{ height: '100%' }}>
+            <CardContent sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', p: 3 }}>
+              <UploadIcon color="primary" sx={{ fontSize: 60, mb: 2 }} />
+              <Typography variant="h6" gutterBottom>
+                Click to Upload
               </Typography>
-              
-              <Box
-                sx={{
-                  border: '2px dashed',
-                  borderColor: 'primary.light',
-                  borderRadius: 2,
-                  p: 4,
-                  textAlign: 'center',
-                  backgroundColor: 'primary.light',
-                  opacity: 0.1,
-                  mb: 2,
-                }}
+              <Button
+                variant="contained"
+                component="label"
+                disabled={uploading}
+                startIcon={uploading ? <CircularProgress size={20} color="inherit" /> : null}
               >
-                <UploadIcon sx={{ fontSize: 48, color: 'primary.main', mb: 2 }} />
-                <Typography variant="body1" sx={{ mb: 2 }}>
-                  Drag and drop files here or click to browse
-                </Typography>
-                <input
-                  accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
-                  style={{ display: 'none' }}
-                  id="file-upload"
-                  multiple
-                  type="file"
-                  onChange={handleFileUpload}
-                  disabled={uploading}
-                />
-                <label htmlFor="file-upload">
-                  <Button
-                    variant="contained"
-                    component="span"
-                    startIcon={<UploadIcon />}
-                    disabled={uploading}
-                  >
-                    Choose Files
-                  </Button>
-                </label>
-              </Box>
-
-              {uploading && (
-                <Box sx={{ mb: 2 }}>
-                  <Typography variant="body2" sx={{ mb: 1 }}>
-                    Uploading documents...
-                  </Typography>
-                  <LinearProgress />
-                </Box>
-              )}
-
-              <Typography variant="caption" color="text.secondary">
-                Supported formats: PDF, DOC, DOCX, JPG, JPEG, PNG (Max 10MB per file)
+                {uploading ? 'Uploading...' : 'Select Files'}
+                <input type="file" hidden multiple onChange={handleFileUpload} />
+              </Button>
+              <Typography variant="caption" color="text.secondary" sx={{ mt: 2 }}>
+                Supported formats: PDF, JPG, JPEG, PNG (Max 10MB per file)
               </Typography>
             </CardContent>
           </Card>
         </Grid>
 
-        {/* Required Documents Checklist */}
+        {/* Required Documents List */}
         <Grid item xs={12} md={6}>
-          <Card>
-            <CardContent>
-              <Typography variant="h6" sx={{ mb: 2, color: 'primary.main' }}>
-                Document Checklist
-              </Typography>
-              
-              <List>
-                {requiredDocuments.map((doc, index) => {
-                  const hasDocument = getDocumentStatus(doc.name);
-                  return (
-                    <ListItem key={index} sx={{ px: 0 }}>
-                      <ListItemText
-                        primary={
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                            {hasDocument ? (
-                              <CheckIcon sx={{ color: 'success.main', fontSize: 20 }} />
-                            ) : (
-                              <FileIcon sx={{ color: 'text.secondary', fontSize: 20 }} />
-                            )}
-                            <Typography
-                              variant="body2"
-                              sx={{
-                                textDecoration: hasDocument ? 'line-through' : 'none',
-                                color: hasDocument ? 'success.main' : 'text.primary',
-                              }}
-                            >
-                              {doc.name}
-                            </Typography>
-                            {doc.required && (
-                              <Chip
-                                label="Required"
-                                size="small"
-                                color="error"
-                                variant="outlined"
-                              />
-                            )}
-                          </Box>
-                        }
-                        secondary={doc.description}
-                      />
-                    </ListItem>
-                  );
-                })}
-              </List>
-            </CardContent>
-          </Card>
+          <Paper elevation={2} sx={{ p: 2, height: '100%' }}>
+            <Typography variant="h6" gutterBottom>Required Documents</Typography>
+            <List dense>
+              {requiredDocuments.map((doc) => (
+                <ListItem key={doc.name}>
+                  <ListItemIcon>
+                    {isDocumentUploaded(doc.name) ? (
+                      <CheckIcon color="success" />
+                    ) : (
+                      <FileIcon color={doc.required ? 'error' : 'disabled'} />
+                    )}
+                  </ListItemIcon>
+                  <ListItemText 
+                    primary={doc.name}
+                    secondary={doc.description}
+                  />
+                   <Chip 
+                    label={doc.required ? 'Required' : 'Optional'}
+                    size="small"
+                    color={doc.required ? 'primary' : 'default'}
+                  />
+                </ListItem>
+              ))}
+            </List>
+          </Paper>
         </Grid>
 
-        {/* Uploaded Documents */}
+        {/* Uploaded Documents List */}
         <Grid item xs={12}>
-          <Card>
-            <CardContent>
-              <Typography variant="h6" sx={{ mb: 2, color: 'primary.main' }}>
-                Uploaded Documents ({uploadedDocuments.length})
+          <Paper elevation={2} sx={{ p: 2 }}>
+            <Typography variant="h6" gutterBottom>Uploaded Files</Typography>
+            {uploadedDocuments.length > 0 ? (
+              <List dense>
+                {uploadedDocuments.map((doc) => (
+                  <ListItem
+                    key={doc.filename}
+                    secondaryAction={
+                      <IconButton edge="end" aria-label="delete" onClick={() => handleDeleteDocument(doc.filename)}>
+                        <DeleteIcon />
+                      </IconButton>
+                    }
+                  >
+                    <ListItemIcon>
+                      <FileIcon />
+                    </ListItemIcon>
+                    <ListItemText primary={doc.filename} secondary={`Type: ${doc.document_type}`} />
+                  </ListItem>
+                ))}
+              </List>
+            ) : (
+              <Typography color="text.secondary" sx={{ mt: 2, textAlign: 'center' }}>
+                No documents uploaded yet.
               </Typography>
-              
-              {uploadedDocuments.length === 0 ? (
-                <Typography variant="body2" color="text.secondary">
-                  No documents uploaded yet
-                </Typography>
-              ) : (
-                <List>
-                  {uploadedDocuments.map((filename, index) => (
-                    <ListItem key={index} divider>
-                      <FileIcon sx={{ mr: 2, color: 'primary.main' }} />
-                      <ListItemText
-                        primary={filename}
-                        secondary={`Uploaded on ${new Date().toLocaleDateString()}`}
-                      />
-                      <ListItemSecondaryAction>
-                        <IconButton
-                          edge="end"
-                          aria-label="delete"
-                          onClick={() => handleDeleteDocument(filename)}
-                          color="error"
-                        >
-                          <DeleteIcon />
-                        </IconButton>
-                      </ListItemSecondaryAction>
-                    </ListItem>
-                  ))}
-                </List>
-              )}
-            </CardContent>
-          </Card>
+            )}
+          </Paper>
         </Grid>
       </Grid>
-
-      {/* Alerts */}
-      {error && (
-        <Alert severity="error" sx={{ mt: 2 }} onClose={() => setError(null)}>
-          {error}
-        </Alert>
-      )}
-      
-      {success && (
-        <Alert severity="success" sx={{ mt: 2 }} onClose={() => setSuccess(null)}>
-          {success}
-        </Alert>
-      )}
     </Box>
   );
 };

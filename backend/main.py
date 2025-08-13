@@ -135,6 +135,8 @@ async def chat_endpoint(chat_data: ChatMessage):
         })
         
         # Determine button visibility
+        print(session)
+        print(chat_data.message)
         user_wants_to_apply = "apply" in chat_data.message.lower() or "application" in chat_data.message.lower()
         assistant_suggests_apply = "application" in response.lower()
         user_wants_to_upload = "upload" in chat_data.message.lower() or "document" in chat_data.message.lower()
@@ -241,7 +243,7 @@ async def submit_application(request: Request, session_id: str = Form(...)):
 async def upload_document(
     file: UploadFile = File(...),
     session_id: str = Form(...),
-    token: str = Form(...)
+    token: str = Form(...)  # Keep token for now, but use session data for ID
 ):
     """Upload document to S3"""
     try:
@@ -252,19 +254,19 @@ async def upload_document(
             content = await file.read()
             buffer.write(content)
         
-        # Upload to S3 using existing manager
-        success = s3_manager.upload_document(token, temp_path, file.filename)
+        # The 'token' from the frontend is not the application ID.
+        # Get the correct application ID from the session.
+        if session_id not in sessions or "current_application_id" not in sessions[session_id]:
+            raise HTTPException(status_code=400, detail="No active application found for this session.")
         
-        # Clean up temp file
-        os.remove(temp_path)
+        application_id = sessions[session_id]["current_application_id"]
+
+        # Upload to S3 using the correct application_id
+        success = s3_manager.upload_document(application_id, temp_path, file.filename)
         
         if success:
             # Check if this is the first document upload for a pending application
-            if (session_id in sessions and 
-                sessions[session_id].get("application_status") == "pending_documents" and
-                "current_application_id" in sessions[session_id]):
-                
-                application_id = sessions[session_id]["current_application_id"]
+            if (sessions[session_id].get("application_status") == "pending_documents"):
                 
                 # Get the application data
                 if application_id in sessions[session_id]["applications"]:
@@ -272,15 +274,13 @@ async def upload_document(
                     
                     # Run orchestrator workflow now that documents are uploaded
                     try:
-                        workflow_result = orchestrator.run_workflow(form_data, {token: temp_path})
+                        # Pass the correct application_id and the path to the temp file
+                        workflow_result = orchestrator.run_workflow(form_data, {application_id: temp_path})
                         
                         # Update application status
                         sessions[session_id]["application_status"] = "processing"
                         
                         # Add chat message about processing
-                        if "chat_history" not in sessions[session_id]:
-                            sessions[session_id]["chat_history"] = []
-                        
                         sessions[session_id]["chat_history"].append({
                             "role": "assistant",
                             "content": f"📄 Document uploaded successfully! Your application {application_id} is now being processed by our loan officers. You will receive updates on the status shortly."
@@ -296,12 +296,17 @@ async def upload_document(
                             "content": f"📄 Document uploaded successfully! However, there was an issue starting the processing workflow: {str(e)}. Please contact support."
                         })
             
+            # Clean up temp file AFTER all processing is done
+            os.remove(temp_path)
+
             return DocumentUploadResponse(
                 success=True,
                 message="Document uploaded successfully!",
                 filename=file.filename
             )
         else:
+            # Clean up temp file even if S3 upload fails
+            os.remove(temp_path)
             return DocumentUploadResponse(
                 success=False,
                 message="Failed to upload document"

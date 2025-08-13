@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Drawer,
   List,
@@ -18,11 +18,14 @@ import {
   Home as HomeIcon,
 } from '@mui/icons-material';
 import { useAppStore } from '../store/appStore';
+import TokenValidation from './TokenValidation';
 
 const DRAWER_WIDTH = 240;
 
 const Sidebar: React.FC = () => {
-  const { currentView, setCurrentView } = useAppStore();
+  const { currentView, setCurrentView, setUploadToken } = useAppStore();
+  const [tokenDialogOpen, setTokenDialogOpen] = useState(false);
+  const [pendingView, setPendingView] = useState<'upload' | 'results' | null>(null);
 
   const menuItems = [
     { id: 'chat', label: 'Chat Assistant', icon: <ChatIcon />, view: 'chat' as const },
@@ -30,6 +33,30 @@ const Sidebar: React.FC = () => {
     { id: 'upload', label: 'Document Upload', icon: <UploadIcon />, view: 'upload' as const },
     { id: 'results', label: 'Results & Analysis', icon: <ResultsIcon />, view: 'results' as const },
   ];
+
+  const handleMenuClick = (view: 'chat' | 'application' | 'upload' | 'results') => {
+    // For upload and results, require token validation
+    if (view === 'upload' || view === 'results') {
+      setPendingView(view);
+      setTokenDialogOpen(true);
+    } else {
+      setCurrentView(view);
+    }
+  };
+
+  const handleTokenValidated = (token: string) => {
+    setUploadToken(token);
+    if (pendingView) {
+      setCurrentView(pendingView);
+    }
+    setTokenDialogOpen(false);
+    setPendingView(null);
+  };
+
+  const handleTokenDialogClose = () => {
+    setTokenDialogOpen(false);
+    setPendingView(null);
+  };
 
   return (
     <Drawer
@@ -60,7 +87,7 @@ const Sidebar: React.FC = () => {
           <ListItem key={item.id} disablePadding sx={{ mb: 0.5 }}>
             <ListItemButton
               selected={currentView === item.view}
-              onClick={() => setCurrentView(item.view)}
+              onClick={() => handleMenuClick(item.view)}
               sx={{
                 borderRadius: 1,
                 '&.Mui-selected': {

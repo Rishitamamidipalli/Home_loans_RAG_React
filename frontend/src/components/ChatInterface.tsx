@@ -17,6 +17,8 @@ import {
   Description as FormIcon,
   CloudUpload as UploadIcon,
 } from '@mui/icons-material';
+
+import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '../store/appStore';
 import { sendChatMessage } from '../services/api';
 
@@ -27,17 +29,19 @@ const ChatInterface: React.FC = () => {
     sessionId,
     isLoading,
     setIsLoading,
-    showFormButton,
+    showUploadButton,
     setUIButtons,
     setCurrentView,
-    setUploadToken,
+    setSessionId,
   } = useAppStore();
+  const navigate = useNavigate();
 
   const [message, setMessage] = useState('');
   const [error, setError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [expectingToken, setExpectingToken] = useState(false);
   const [initialOptionsUsed, setInitialOptionsUsed] = useState(false);
+  const [shouldShowOptions, setShouldShowOptions] = useState(false);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -73,16 +77,18 @@ const ChatInterface: React.FC = () => {
   }, [sessionId]);
 
   const handleSendMessage = async () => {
-    if (!message.trim() || isLoading) return;
-
-    // If we are expecting a token, capture it and do not call backend
     if (expectingToken) {
       const tokenVal = message.trim();
       addChatMessage({ role: 'user', content: tokenVal });
-      setUploadToken(tokenVal);
+      setSessionId(tokenVal);
       setMessage('');
       setExpectingToken(false);
-      addChatMessage({ role: 'assistant', content: 'Thanks! I have recorded your token ID for your existing application.' });
+      setUIButtons({ showUploadButton: true }); 
+      addChatMessage({ 
+        role: 'assistant', 
+        content: `Thank you. You can now upload documents for application ${tokenVal}.`
+      });
+      navigate('/documents');
       return;
     }
 
@@ -125,13 +131,13 @@ const ChatInterface: React.FC = () => {
   };
 
   const handleOpenExisting = () => {
-    // Bot asks for token in chat; do not show upload button or navigate
-    addChatMessage({ role: 'assistant', content: 'Please enter your existing customer token number.' });
+    addChatMessage({
+      role: 'assistant',
+      content: 'Please enter your application token.',
+    });
     setExpectingToken(true);
-    setUIButtons({ showFormButton: false });
     setInitialOptionsUsed(true);
   };
-
 
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -145,18 +151,7 @@ const ChatInterface: React.FC = () => {
         </Typography>
       </Paper>
 
-      {/* Chat Messages */}
-      <Paper
-        sx={{
-          flexGrow: 1,
-          p: 2,
-          mb: 2,
-          overflow: 'auto',
-          backgroundColor: '#fafafa',
-          minHeight: '400px',
-        }}
-      >
-        {chatHistory.map((msg, index) => (
+      {chatHistory.map((msg, index) => (
           <Box
             key={index}
             sx={{
@@ -210,10 +205,13 @@ const ChatInterface: React.FC = () => {
         )}
         
         <div ref={messagesEndRef} />
-      </Paper>
 
+       
       {/* Action Buttons */}
-      {showFormButton && !initialOptionsUsed && (
+      {chatHistory.length > 0 &&
+        chatHistory[chatHistory.length - 1].role === 'assistant' &&
+        chatHistory[chatHistory.length - 1].content.includes('Are you an existing customer?') &&
+        !initialOptionsUsed && (
         <Box sx={{ mb: 2, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
           <Button
             variant="contained"
@@ -230,6 +228,21 @@ const ChatInterface: React.FC = () => {
             sx={{ borderRadius: 2 }}
           >
             Existing Customer - Enter Token
+          </Button>
+        </Box>
+      )}
+
+      {/* Upload Documents Button */}
+      {showUploadButton && (
+        <Box sx={{ mb: 2 }}>
+          <Button
+            variant="contained"
+            color="secondary"
+            startIcon={<UploadIcon />}
+            onClick={() => setCurrentView('upload')}
+            sx={{ borderRadius: 2 }}
+          >
+            Upload Documents
           </Button>
         </Box>
       )}
