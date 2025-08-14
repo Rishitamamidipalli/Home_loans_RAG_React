@@ -393,6 +393,7 @@ def render_document_upload(token: str, s3_manager: S3ApplicationManager):
 
                 # Upload new file to S3
                 print(token,uploaded_file,doc_type)
+                print("token:",token,"uploaded_file:",uploaded_file,"doc_type:",doc_type)
                 s3_path = s3_manager.upload_document(token, uploaded_file, doc_type)
                 uploaded_files[doc_type] = s3_path
                 st.success(f"{doc_type} uploaded successfully to: {s3_path}")

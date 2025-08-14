@@ -76,31 +76,34 @@ const DocumentUpload: React.FC = () => {
     }
   }, [currentApplicationId]);
 
-  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files?.length) {
-      setError('Please select a file to upload');
-      return;
-    }
-    
-    if (!currentApplicationId) {
-      setError('Please complete your application first');
-      return;
-    }
-    
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>, docType: string) => {
     try {
       setLoading(true);
       setError(null);
       setSuccess(null);
       
-      const file = e.target.files[0];
-      await uploadDocument(file, sessionId, currentApplicationId);
+      if (!e.target.files?.[0]) {
+        throw new Error('No file selected');
+      }
       
-      // Refresh documents list
+      if (!currentApplicationId) {
+        throw new Error('No application ID found');
+      }
+      
+      const file = e.target.files[0];
+      await uploadDocument(file, sessionId, currentApplicationId, docType);
+      
+      // Force refresh documents list with a new request
       const updatedDocs = await listDocuments(currentApplicationId);
       setDocuments(updatedDocs);
-      setSuccess('Document uploaded successfully!');
+      setSuccess(`Document uploaded successfully!`);
+      
+      // Clear file input to allow re-upload if needed
+      if (e.target) {
+        e.target.value = '';
+      }
     } catch (err) {
-      setError('Failed to upload document: ' + (err as Error).message);
+      setError(err instanceof Error ? err.message : 'Failed to upload document');
     } finally {
       setLoading(false);
     }
@@ -165,7 +168,7 @@ const DocumentUpload: React.FC = () => {
                 startIcon={loading ? <CircularProgress size={20} /> : null}
               >
                 {loading ? 'Uploading...' : 'Select File'}
-                <input type="file" hidden onChange={handleUpload} />
+                <input type="file" hidden onChange={(e) => handleUpload(e, 'identity')} />
               </Button>
               <Typography variant="caption" color="text.secondary" sx={{ mt: 2 }}>
                 Supported formats: PDF, JPG, JPEG, PNG

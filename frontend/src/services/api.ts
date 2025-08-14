@@ -109,19 +109,21 @@ export const getApplication = async (sessionId: string, applicationId: string): 
 export const uploadDocument = async (
   file: File,
   sessionId: string,
-  applicationId: string
+  applicationId: string,
+  docType: string
 ): Promise<DocumentUploadResponse> => {
   const formData = new FormData();
   formData.append('file', file);
   formData.append('session_id', sessionId);
-  
+  formData.append('doc_type', docType);
+
   const response = await api.post<DocumentUploadResponse>(
-    '/api/upload',
+    `/api/application/${applicationId}/documents`,
     formData,
     {
       headers: {
-        'Content-Type': 'multipart/form-data'
-      }
+        'Content-Type': 'multipart/form-data',
+      },
     }
   );
   return response.data;
@@ -136,4 +138,3 @@ export const deleteDocument = async (file_id: string, token: string): Promise<vo
 };
 
 export default api;
-

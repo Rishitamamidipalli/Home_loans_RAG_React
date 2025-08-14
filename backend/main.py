@@ -8,6 +8,7 @@ import tempfile
 import json
 from datetime import datetime
 import re
+import io
 
 # Import existing modules
 from s3_manager import S3ApplicationManager
@@ -279,10 +280,12 @@ async def submit_application(request: Request, session_id: str = Form(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/upload")
+@app.post("/api/application/{application_id}/documents")
 async def upload_document(
+    application_id: str,
     file: UploadFile = File(...),
     session_id: str = Form(...),
+    doc_type: str = Form(...),
 ):
     """Upload a document to S3 and associate with current application"""
     try:
@@ -292,14 +295,28 @@ async def upload_document(
         if session_id not in sessions:
             raise HTTPException(404, "Session not found")
             
-        if not sessions[session_id].get("current_application_id"):
+        session_app_id = sessions[session_id].get("current_application_id")
+        if not session_app_id:
             raise HTTPException(400, "No active application found")
         
-        application_id = sessions[session_id]["current_application_id"]
-        print(f"Uploading document for application {application_id}")
+        if application_id != session_app_id:
+            raise HTTPException(400, "Application ID mismatch")
+        print(file,application_id,doc_type)
+        print(f"Uploading {doc_type} document for application {application_id}")
         
         try:
-            result = s3_manager.upload_document(application_id, file)
+            # Handle both FastAPI UploadFile and regular file objects
+            if hasattr(file, 'file'):  # FastAPI UploadFile
+                # Create a copy of the file content before passing to S3
+                file_content = file.file.read()
+                file_obj = io.BytesIO(file_content)
+                file_obj.name = file.filename  # Preserve original filename
+            else:
+                file_obj = file
+                
+            result = s3_manager.upload_document(application_id, file_obj, doc_type)
+            print("result",result)
+            return {"status": "success", "s3_path": result}
         except Exception as s3_error:
             print(f"S3 upload failed: {str(s3_error)}")
             raise HTTPException(500, "Failed to upload document to storage")

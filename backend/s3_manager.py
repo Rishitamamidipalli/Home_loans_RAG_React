@@ -155,48 +155,65 @@ class S3ApplicationManager:
         except Exception as e:
             st.error(f"Failed to list applications from S3: {str(e)}")
             return []
-    
     def upload_document(self, token: str, file_obj, doc_type: str) -> str:
         """
         Upload a document to S3 and return the full S3 path
         Format: s3://{bucket}/{prefix}{token}/documents/{token}_{doc_type}.ext
         """
         try:
-            print(f"Attempting to upload document to S3 for token {token}")
+            print(token,file_obj,doc_type)
+            clean_token_val = clean_token(token)
             
-            # Verify S3 client is properly initialized
-            if not hasattr(self, 's3') or not self.s3:
-                raise Exception("S3 client not initialized")
-                
-            # Generate unique file path
-            file_id = str(uuid.uuid4())
-            file_path = f"{S3_PREFIX}{token}/documents/{file_id}_{file_obj.name}"
-            print(f"Uploading file to S3 path: {file_path}")
+            # 1. Ensure documents folder exists
+            documents_prefix = f"{S3_PREFIX}{clean_token_val}/documents/"
+            self.s3.put_object(
+                Bucket=S3_BUCKET_NAME,
+                Key=documents_prefix,
+                Body=b'',
+                ContentType='application/x-directory'
+            )
             
-            # Upload file contents
-            try:
-                # For Streamlit file uploader objects
-                if hasattr(file_obj, 'read'):
-                    file_bytes = file_obj.read()
-                else:
-                    file_bytes = file_obj.getvalue()
-                    
-                self.s3.put_object(
-                    Bucket=S3_BUCKET_NAME,
-                    Key=file_path,
-                    Body=file_bytes,
-                    ContentType=self._get_content_type(file_obj.name.split('.')[-1])
-                )
-                print("S3 upload successful")
-                return f"s3://{S3_BUCKET_NAME}/{file_path}"
-            except Exception as upload_error:
-                print(f"S3 upload failed: {str(upload_error)}")
-                raise
+            # 2. Get file extension and document type
+            if hasattr(file_obj, 'filename'):  # FastAPI UploadFile
+                filename = file_obj.filename
+            elif hasattr(file_obj, 'name'):    # Regular file object
+                filename = file_obj.name
+            else:                              # SpooledTemporaryFile
+                filename = doc_type + '.jpg'   # Default extension
                 
+            file_base = os.path.splitext(filename)[0]
+            doc_type = file_base.split('_')[0]  # Extract PAN from PAN.jpg or similar
+            file_ext = os.path.splitext(filename)[1][1:].lower() if '.' in filename else 'jpg'
+            
+            if file_ext not in ['pdf', 'jpg', 'jpeg', 'png']:
+                raise ValueError(f"Unsupported file type: {file_ext}")
+            
+            # 3. Upload file
+            file_key = f"{documents_prefix}{clean_token_val}_{doc_type}.{file_ext}"
+            
+            if hasattr(file_obj, 'read'):
+                file_bytes = file_obj.read()
+            elif hasattr(file_obj, 'getvalue'):
+                file_bytes = file_obj.getvalue()
+            else:
+                raise ValueError("Invalid file object - no readable content")
+                
+            if not file_bytes:
+                raise ValueError("Empty file content")
+                
+            self.s3.put_object(
+                Bucket=S3_BUCKET_NAME,
+                Key=file_key,
+                Body=file_bytes,
+                ContentType=self._get_content_type(file_ext)
+            )
+            
+            # Return full S3 path
+            return f"s3://{S3_BUCKET_NAME}/{file_key}"
+            
         except Exception as e:
-            print(f"Document upload failed: {str(e)}")
-            raise
-    
+            st.error(f"Failed to upload document: {str(e)}")
+            raise  # Re-raise to handle in calling code
     def list_documents(self, token: str) -> list:
         """List all documents with full S3 paths"""
         try:
