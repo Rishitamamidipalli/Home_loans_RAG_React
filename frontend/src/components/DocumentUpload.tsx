@@ -110,10 +110,13 @@ const DocumentUpload: React.FC = () => {
   };
 
   const handleDelete = async (file_id: string) => {
+    console.log("Delete initiated with file_id:", file_id, "currentApplicationId:", currentApplicationId);
     if (!currentApplicationId) return;
     try {
       setLoading(true);
+      console.log("Calling delete API with:", {file_id, applicationId: currentApplicationId});
       await deleteDocument(file_id, currentApplicationId);
+      console.log("Delete successful, refreshing document list");
       setSuccess('Document deleted successfully');
       const updatedDocs = await listDocuments(currentApplicationId);
       setDocuments(updatedDocs);
@@ -212,13 +215,18 @@ const DocumentUpload: React.FC = () => {
             </Typography>
             {documents.length > 0 ? (
               <List>
-                {documents.map((doc) => (
+                {documents.map((doc) =>
+                 (
                   <ListItem
                     key={doc.file_id}
+                    
                     secondaryAction={
                       <IconButton 
                         edge="end" 
-                        onClick={() => handleDelete(doc.file_id)}
+                        onClick={() => {
+                          console.log("Deleting document with ID:", doc.file_id, "Full doc:", doc);
+                          handleDelete(doc.file_id);
+                        }}
                         disabled={loading}
                       >
                         <DeleteIcon />

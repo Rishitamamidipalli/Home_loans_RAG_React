@@ -271,9 +271,11 @@ class S3ApplicationManager:
                     
                 documents.append({
                     'name': clean_filename,
+                    'original_name': filename,  # Keep original filename with token
                     's3_path': f"s3://{S3_BUCKET_NAME}/{obj['Key']}",
                     'size': obj['Size'],
-                    'last_modified': obj['LastModified']
+                    'last_modified': obj['LastModified'],
+                    'file_id': filename  # Use original filename as file_id
                 })
                 
             return documents
@@ -281,10 +283,20 @@ class S3ApplicationManager:
             st.error(f"Failed to list documents: {str(e)}")
             return []
     def delete_document(self, token: str, filename: str) -> None:
+        """
+        Delete a document from S3
+        Format: {prefix}{token}/documents/{filename}
+        """
         try:
-            clean_token_val = clean_token(token)
-            file_key = f"{S3_PREFIX}{clean_token_val}/documents/{filename}"
-
-            self.s3.delete_object(Bucket=S3_BUCKET_NAME, Key=file_key)
+            actual_token=filename 
+            actual_file_name=token
+            clean_token_val = clean_token(actual_token)
+            file_key = f"{S3_PREFIX}{clean_token_val}/documents/{actual_file_name}"
+            print("file_key",file_key)
+            self.s3.delete_object(
+                Bucket=S3_BUCKET_NAME,
+                Key=file_key
+            )
         except Exception as e:
-            st.error(f"Failed to delete document {filename}: {str(e)}")
+            print(f"Failed to delete document {filename}: {str(e)}")
+            raise

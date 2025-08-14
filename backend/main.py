@@ -188,7 +188,11 @@ async def chat_endpoint(chat_data: ChatMessage):
         )
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"Chat error - Session: {chat_data.session_id if 'chat_data' in locals() else 'N/A'}")
+        print(f"Error type: {type(e).__name__}")
+        print(f"Error details: {str(e)}")
+        print(f"Traceback: {e.__traceback__}")
+        raise HTTPException(500, "Failed to process chat message")
 
 @app.get("/api/chat/history/{session_id}")
 async def get_chat_history(session_id: str):
@@ -338,40 +342,30 @@ async def upload_document(
 @app.get("/api/documents/{token}")
 async def list_documents(token: str):
     try:
-        # In a real app, you'd query your database here
-        # This example uses the session storage
-        for session in sessions.values():
-            if "documents" in session:
-                return {
-                    "documents": [
-                        doc for doc in session["documents"].values() 
-                        if doc["s3_path"].contains(token)
-                    ]
-                }
-        return {"documents": []}
+        # Get documents from S3 for this application token
+        documents = s3_manager.list_documents(token)
+        return {"documents": documents}
     except Exception as e:
-        raise HTTPException(500, str(e))
+        raise HTTPException(500, f"Failed to list documents: {str(e)}")
 
 @app.delete("/api/documents/{file_id}")
 async def delete_document(
-    file_id: str,
-    session_id: str = Query(...)
+    file_id: str,  # Format: {token}_{doc_type}.ext (e.g. HL1755006612900_company.jpg)
+    session_id: str = Query(..., description="The application token ID")
 ):
     """Delete a document"""
+    print(f"Delete request - full_filename: {file_id}, token_id: {session_id}")
     try:
-        if session_id not in sessions or not sessions[session_id].get("current_application_id"):
-            raise HTTPException(400, "No active application found")
-        
-        application_id = sessions[session_id]["current_application_id"]
-        
-        # Delete from S3 and session
-        s3_manager.delete_document(application_id, file_id)
-        if "documents" in sessions[session_id] and file_id in sessions[session_id]["documents"]:
-            del sessions[session_id]["documents"][file_id]
-        
-        return {"success": True}
+        # Verify the file_id starts with the session_id (token)
+        if not file_id.startswith(session_id):
+            raise HTTPException(400, "File does not belong to this application")
+            
+        print(f"Deleting document {file_id} for token {session_id}")
+        s3_manager.delete_document(file_id,session_id)
+        return {"status": "success"}
     except Exception as e:
-        raise HTTPException(500, str(e))
+        print(f"Delete failed: {str(e)}")
+        raise HTTPException(500, f"Failed to delete document: {str(e)}")
 
         
 if __name__ == "__main__":

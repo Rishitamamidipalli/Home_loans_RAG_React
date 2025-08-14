@@ -416,6 +416,7 @@ def render_document_upload(token: str, s3_manager: S3ApplicationManager):
             with col2:
                 if st.button("Delete", key=f"del_{doc['name']}"):
                     actual_file_name = token + "_" + doc['name']
+                    print(token,actual_file_name)
                     s3_manager.delete_document(token, actual_file_name)
                     
     else:

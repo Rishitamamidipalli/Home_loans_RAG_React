@@ -133,8 +133,12 @@ export const listDocuments = async (token: string): Promise<Document[]> => {
   return response.data.documents;
 };
 
-export const deleteDocument = async (file_id: string, token: string): Promise<void> => {
-  await api.delete(`/api/documents/${token}/${file_id}`);
+export const deleteDocument = async (file_id: string, applicationId: string): Promise<void> => {
+  await api.delete(`/api/documents/${file_id}`, {
+    params: {
+      session_id: applicationId
+    }
+  });
 };
 
 export default api;
