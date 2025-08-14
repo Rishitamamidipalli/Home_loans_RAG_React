@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends, Request
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -7,6 +7,7 @@ import os
 import tempfile
 import json
 from datetime import datetime
+import re
 
 # Import existing modules
 from s3_manager import S3ApplicationManager
@@ -87,10 +88,18 @@ class ApplicationResponse(BaseModel):
     message: str
     application_id: Optional[str] = None
 
-class DocumentUploadResponse(BaseModel):
-    success: bool
-    message: str
-    filename: Optional[str] = None
+class FileMetadata(BaseModel):
+    name: str
+    type: str
+    size: int
+
+class DocumentResponse(BaseModel):
+    name: str
+    s3_path: str
+    size: int
+    last_modified: str
+    file_id: str
+    type: str
 
 # In-memory storage for session data (replace with Redis in production)
 sessions = {}
@@ -114,12 +123,33 @@ async def chat_endpoint(chat_data: ChatMessage):
                 "show_form_button": False,
                 "show_upload_button": False,
                 "show_update_button": False,
-                "show_cancel_button": False
+                "show_cancel_button": False,
+                "current_application_id": None
             }
         
         session = sessions[chat_data.session_id]
         
-        # Add user message to history
+        # First process application ID if present
+        clean_msg = chat_data.message.replace(" ", "").upper()
+        stripped_msg = chat_data.message.strip().upper()
+
+        # Case 1: Message is exactly an application ID (with or without spaces)
+        if re.fullmatch(r'HL\d{13}', clean_msg):
+            session["current_application_id"] = clean_msg
+            if clean_msg not in session["applications"]:
+                session["applications"][clean_msg] = {"status": "standalone_id"}
+
+        # Case 2: Application ID found within a larger message
+        elif "HL" in stripped_msg:
+            app_id_match = re.search(r'(?:^|\s)(H\s*L\s*(?:\d\s*){13})(?:$|\s)', stripped_msg)
+            if app_id_match:
+                clean_id = re.sub(r'\s+', '', app_id_match.group(1))
+                if re.fullmatch(r'HL\d{13}', clean_id):
+                    session["current_application_id"] = clean_id
+                    if clean_id not in session["applications"]:
+                        session["applications"][clean_id] = {"status": "found_in_chat"}
+        
+        # Then add user message to history
         session["chat_history"].append({
             "role": "user", 
             "content": chat_data.message
@@ -181,6 +211,16 @@ async def get_chat_history(session_id: str):
         "show_cancel_button": session.get("show_cancel_button", False)
     }
 
+@app.get('/api/session/{session_id}')
+async def get_session_data(session_id: str):
+    if session_id not in sessions:
+        raise HTTPException(404, 'Session not found')
+    
+    return {
+        'current_application_id': sessions[session_id].get('current_application_id'),
+        'chat_history': sessions[session_id].get('chat_history', [])
+    }
+
 @app.post("/api/application", response_model=ApplicationResponse)
 async def submit_application(request: Request, session_id: str = Form(...)):
     """Submit loan application (accepts multipart form data from the frontend)."""
@@ -225,7 +265,7 @@ async def submit_application(request: Request, session_id: str = Form(...)):
             "role": "assistant",
             "content": f"🎉 Great! Your loan application has been submitted successfully.\n\n📋 **Your Application ID:** {application_id}\n\n📄 **Next Step:** Please upload your required documents (income proof, ID proof, address proof, etc.) to complete your application. Click the 'Upload Documents' button below to get started."
         })
-        
+        print(sessions)
         # Set flags to show upload button in chat
         sessions[session_id]["show_upload_button"] = True
         sessions[session_id]["show_form_button"] = False
@@ -239,108 +279,84 @@ async def submit_application(request: Request, session_id: str = Form(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/upload", response_model=DocumentUploadResponse)
+@app.post("/api/upload")
 async def upload_document(
     file: UploadFile = File(...),
     session_id: str = Form(...),
-    token: str = Form(...)  # Keep token for now, but use session data for ID
 ):
-    """Upload document to S3"""
+    """Upload a document to S3 and associate with current application"""
     try:
-        # Save uploaded file temporarily (cross-platform temp dir)
-        temp_dir = tempfile.gettempdir()
-        temp_path = os.path.join(temp_dir, file.filename)
-        with open(temp_path, "wb") as buffer:
-            content = await file.read()
-            buffer.write(content)
-        
-        # The 'token' from the frontend is not the application ID.
-        # Get the correct application ID from the session.
-        if session_id not in sessions or "current_application_id" not in sessions[session_id]:
-            raise HTTPException(status_code=400, detail="No active application found for this session.")
+        if not file:
+            raise HTTPException(400, "No file provided")
+            
+        if session_id not in sessions:
+            raise HTTPException(404, "Session not found")
+            
+        if not sessions[session_id].get("current_application_id"):
+            raise HTTPException(400, "No active application found")
         
         application_id = sessions[session_id]["current_application_id"]
-
-        # Upload to S3 using the correct application_id
-        success = s3_manager.upload_document(application_id, temp_path, file.filename)
+        print(f"Uploading document for application {application_id}")
         
-        if success:
-            # Check if this is the first document upload for a pending application
-            if (sessions[session_id].get("application_status") == "pending_documents"):
-                
-                # Get the application data
-                if application_id in sessions[session_id]["applications"]:
-                    form_data = sessions[session_id]["applications"][application_id]
-                    
-                    # Run orchestrator workflow now that documents are uploaded
-                    try:
-                        # Pass the correct application_id and the path to the temp file
-                        workflow_result = orchestrator.run_workflow(form_data, {application_id: temp_path})
-                        
-                        # Update application status
-                        sessions[session_id]["application_status"] = "processing"
-                        
-                        # Add chat message about processing
-                        sessions[session_id]["chat_history"].append({
-                            "role": "assistant",
-                            "content": f"📄 Document uploaded successfully! Your application {application_id} is now being processed by our loan officers. You will receive updates on the status shortly."
-                        })
-                        
-                        # Hide upload button, processing has started
-                        sessions[session_id]["show_upload_button"] = False
-                        
-                    except Exception as e:
-                        # If workflow fails, still confirm upload but note processing error
-                        sessions[session_id]["chat_history"].append({
-                            "role": "assistant",
-                            "content": f"📄 Document uploaded successfully! However, there was an issue starting the processing workflow: {str(e)}. Please contact support."
-                        })
-            
-            # Clean up temp file AFTER all processing is done
-            os.remove(temp_path)
-
-            return DocumentUploadResponse(
-                success=True,
-                message="Document uploaded successfully!",
-                filename=file.filename
-            )
-        else:
-            # Clean up temp file even if S3 upload fails
-            os.remove(temp_path)
-            return DocumentUploadResponse(
-                success=False,
-                message="Failed to upload document"
-            )
-            
+        try:
+            result = s3_manager.upload_document(application_id, file)
+        except Exception as s3_error:
+            print(f"S3 upload failed: {str(s3_error)}")
+            raise HTTPException(500, "Failed to upload document to storage")
+        
+        # Store document metadata in session
+        if "documents" not in sessions[session_id]:
+            sessions[session_id]["documents"] = {}
+        sessions[session_id]["documents"][result["file_id"]] = {
+            "name": file.filename,
+            "type": file.content_type,
+            "size": result["size"],
+            "s3_path": result["s3_path"]
+        }
+        
+        return result
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(500, str(e))
 
 @app.get("/api/documents/{token}")
 async def list_documents(token: str):
-    """List uploaded documents"""
     try:
-        documents = s3_manager.list_documents(token)
-        return {"documents": documents}
+        # In a real app, you'd query your database here
+        # This example uses the session storage
+        for session in sessions.values():
+            if "documents" in session:
+                return {
+                    "documents": [
+                        doc for doc in session["documents"].values() 
+                        if doc["s3_path"].contains(token)
+                    ]
+                }
+        return {"documents": []}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(500, str(e))
 
-@app.delete("/api/documents/{token}/{filename}")
-async def delete_document(token: str, filename: str):
-    """Delete uploaded document"""
+@app.delete("/api/documents/{file_id}")
+async def delete_document(
+    file_id: str,
+    session_id: str = Query(...)
+):
+    """Delete a document"""
     try:
-        s3_manager.delete_document(token, filename)
-        return {"success": True, "message": "Document deleted successfully"}
+        if session_id not in sessions or not sessions[session_id].get("current_application_id"):
+            raise HTTPException(400, "No active application found")
+        
+        application_id = sessions[session_id]["current_application_id"]
+        
+        # Delete from S3 and session
+        s3_manager.delete_document(application_id, file_id)
+        if "documents" in sessions[session_id] and file_id in sessions[session_id]["documents"]:
+            del sessions[session_id]["documents"][file_id]
+        
+        return {"success": True}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(500, str(e))
 
-@app.get("/api/application/{session_id}/{application_id}")
-async def get_application(session_id: str, application_id: str):
-    """Get application details"""
-    if session_id not in sessions or application_id not in sessions[session_id]["applications"]:
-        raise HTTPException(status_code=404, detail="Application not found")
-    
-    return sessions[session_id]["applications"][application_id]
-
+        
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

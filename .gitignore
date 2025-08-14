@@ -3,9 +3,11 @@ my_env/
 __pycache__/
 *.pyc
 .env
+.env.example
 *.log
 backend/venv/
-
+Lib/site-packages/
+Include/
 # Node / React
 node_modules/
 build/
@@ -17,9 +19,31 @@ yarn-error.log
 .env.development.local
 .env.test.local
 .env.production.local
-.env
 __pycache__/
 *.pyc
 .DS_Store
 *.log
+
+# Batch files
 *.bat
+
+# Additional Python ignores
+*.pyo
+*.pyd
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Development files
+*.bak
+*.swp
+.vscode/
+.idea/
+
+# Temporary files
+*.tmp
+*.temp
+*~
+
+# Jupyter notebook extensions
+share/

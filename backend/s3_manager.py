@@ -7,6 +7,7 @@ import re
 from typing import Dict, Any, List, Optional
 import json
 import botocore
+import uuid
 
 # Updated LangChain imports
 from langchain_aws import ChatBedrock
@@ -161,45 +162,41 @@ class S3ApplicationManager:
         Format: s3://{bucket}/{prefix}{token}/documents/{token}_{doc_type}.ext
         """
         try:
-            clean_token_val = clean_token(token)
+            print(f"Attempting to upload document to S3 for token {token}")
             
-            # 1. Ensure documents folder exists
-            documents_prefix = f"{S3_PREFIX}{clean_token_val}/documents/"
-            self.s3.put_object(
-                Bucket=S3_BUCKET_NAME,
-                Key=documents_prefix,
-                Body=b'',
-                ContentType='application/x-directory'
-            )
-            
-            # 2. Get file extension and validate
-            file_ext = os.path.splitext(file_obj.name)[1][1:].lower()
-            if file_ext not in ['pdf', 'jpg', 'jpeg', 'png']:
-                raise ValueError(f"Unsupported file type: {file_ext}")
-            
-            # 3. Upload file
-            file_key = f"{documents_prefix}{clean_token_val}_{doc_type}.{file_ext}"
-            
-            # For Streamlit file uploader objects
-            if hasattr(file_obj, 'read'):
-                file_bytes = file_obj.read()
-            else:
-                file_bytes = file_obj.getvalue()
+            # Verify S3 client is properly initialized
+            if not hasattr(self, 's3') or not self.s3:
+                raise Exception("S3 client not initialized")
                 
-            self.s3.put_object(
-                Bucket=S3_BUCKET_NAME,
-                Key=file_key,
-                Body=file_bytes,
-                ContentType=self._get_content_type(file_ext)
-            )
+            # Generate unique file path
+            file_id = str(uuid.uuid4())
+            file_path = f"{S3_PREFIX}{token}/documents/{file_id}_{file_obj.name}"
+            print(f"Uploading file to S3 path: {file_path}")
             
-            # Return full S3 path
-            return f"s3://{S3_BUCKET_NAME}/{file_key}"
-            
+            # Upload file contents
+            try:
+                # For Streamlit file uploader objects
+                if hasattr(file_obj, 'read'):
+                    file_bytes = file_obj.read()
+                else:
+                    file_bytes = file_obj.getvalue()
+                    
+                self.s3.put_object(
+                    Bucket=S3_BUCKET_NAME,
+                    Key=file_path,
+                    Body=file_bytes,
+                    ContentType=self._get_content_type(file_obj.name.split('.')[-1])
+                )
+                print("S3 upload successful")
+                return f"s3://{S3_BUCKET_NAME}/{file_path}"
+            except Exception as upload_error:
+                print(f"S3 upload failed: {str(upload_error)}")
+                raise
+                
         except Exception as e:
-            st.error(f"Failed to upload document: {str(e)}")
-            raise  # Re-raise to handle in calling code
-
+            print(f"Document upload failed: {str(e)}")
+            raise
+    
     def list_documents(self, token: str) -> list:
         """List all documents with full S3 paths"""
         try:

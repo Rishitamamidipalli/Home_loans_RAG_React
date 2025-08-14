@@ -1,13 +1,35 @@
 import axios from 'axios';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
-
 const api = axios.create({
-  baseURL: API_BASE_URL,
+  baseURL: process.env.REACT_APP_API_URL || 'http://localhost:8000',
+  timeout: 10000,
   headers: {
     'Content-Type': 'application/json',
   },
 });
+
+export interface FileUrls {
+  file_id: string;
+  upload_url: string;
+  delete_url: string;
+}
+
+export interface UploadedFile {
+  file_id: string;
+  name: string;
+  type: string;
+  size: number;
+  _file_urls: FileUrls;
+}
+
+export interface Document {
+  name: string;
+  s3_path: string;
+  size: number;
+  last_modified: string;
+  file_id: string;
+  type: string;
+}
 
 export interface ChatMessage {
   role: 'user' | 'assistant';
@@ -37,11 +59,11 @@ export interface ApplicationResponse {
   message: string;
   application_id?: string;
 }
-
 export interface DocumentUploadResponse {
   success: boolean;
   message: string;
-  filename?: string;
+  file?: UploadedFile;
+  s3_path?: string;
 }
 
 // Chat API
@@ -83,33 +105,35 @@ export const getApplication = async (sessionId: string, applicationId: string): 
   const response = await api.get<ApplicationFormData>(`/api/application/${sessionId}/${applicationId}`);
   return response.data;
 };
-
-// Document API
+// In frontend/src/services/api.ts
 export const uploadDocument = async (
   file: File,
   sessionId: string,
-  token: string
+  applicationId: string
 ): Promise<DocumentUploadResponse> => {
   const formData = new FormData();
   formData.append('file', file);
   formData.append('session_id', sessionId);
-  formData.append('token', token);
-
-  const response = await api.post<DocumentUploadResponse>('/api/upload', formData, {
-    headers: {
-      'Content-Type': 'multipart/form-data',
-    },
-  });
+  
+  const response = await api.post<DocumentUploadResponse>(
+    '/api/upload',
+    formData,
+    {
+      headers: {
+        'Content-Type': 'multipart/form-data'
+      }
+    }
+  );
   return response.data;
 };
-
-export const listDocuments = async (token: string): Promise<string[]> => {
-  const response = await api.get<{ documents: string[] }>(`/api/documents/${token}`);
+export const listDocuments = async (token: string): Promise<Document[]> => {
+  const response = await api.get<{ documents: Document[] }>(`/api/documents/${token}`);
   return response.data.documents;
 };
 
-export const deleteDocument = async (token: string, filename: string): Promise<void> => {
-  await api.delete(`/api/documents/${token}/${filename}`);
+export const deleteDocument = async (file_id: string, token: string): Promise<void> => {
+  await api.delete(`/api/documents/${token}/${file_id}`);
 };
 
 export default api;
+

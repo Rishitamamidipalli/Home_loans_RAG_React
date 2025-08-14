@@ -65,6 +65,8 @@ interface AppState {
   
   // Application
   applicationData: Partial<ApplicationData>;
+  current_application_id: string | null;
+  setCurrentApplicationId: (id: string | null) => void;
   setApplicationData: (data: Partial<ApplicationData>) => void;
   applications: Record<string, ApplicationData>;
   setApplications: (apps: Record<string, ApplicationData>) => void;
@@ -114,6 +116,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   
   // Application
   applicationData: {},
+  current_application_id: null,
+  setCurrentApplicationId: (id) => set({ current_application_id: id }),
   setApplicationData: (data) => set((state) => ({
     applicationData: { ...state.applicationData, ...data }
   })),

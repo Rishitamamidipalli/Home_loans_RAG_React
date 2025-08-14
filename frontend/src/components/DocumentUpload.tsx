@@ -1,119 +1,138 @@
-import React, { useState, useEffect, useCallback } from 'react';
+// src/components/DocumentUpload.tsx
+import React, { useState, useEffect } from 'react';
 import {
-  Box,
-  Paper,
-  Typography,
-  Button,
-  List,
-  ListItem,
-  ListItemIcon,
-  ListItemText,
-  IconButton,
-  CircularProgress,
-  Alert,
-  Card,
-  CardContent,
-  Chip,
-  Grid,
+  Box, Paper, Typography, Button, List, ListItem,
+  ListItemIcon, ListItemText, IconButton, CircularProgress,
+  Alert, Card, CardContent, Chip, Grid
 } from '@mui/material';
 import {
   CloudUpload as UploadIcon,
   Delete as DeleteIcon,
   Description as FileIcon,
-  CheckCircle as CheckIcon,
+  CheckCircle as CheckIcon
 } from '@mui/icons-material';
 import { useAppStore } from '../store/appStore';
-import { uploadDocument, listDocuments, deleteDocument } from '../services/api';
-
-interface UploadedDocument {
-  filename: string;
-  document_type: string;
-  s3_path: string;
-}
+import { uploadDocument, listDocuments, deleteDocument, Document } from '../services/api';
+import axios from 'axios';
 
 const requiredDocuments = [
-  { name: 'Pay Slips', description: 'Recent pay stubs (last 2-3 months)', required: true },
-  { name: 'Aadhaar Card', description: 'Aadhaar card', required: true },
-  { name: 'Company ID Proof', description: 'Company ID proof', required: true },
-  { name: 'Pan Card', description: 'Pan card', required: false },
+  { name: 'PAN', description: 'PAN Card (Front)', required: true },
+  { name: 'Aadhaar', description: 'Aadhaar Card (Front + Back)', required: true },
+  { name: 'CompanyID', description: 'Company ID Card/Letter', required: true },
+  { name: 'Payslip', description: 'Latest Payslip (3 months)', required: true },
 ];
 
 const DocumentUpload: React.FC = () => {
-  const { sessionId, uploadToken } = useAppStore();
-  const token = uploadToken || sessionId; // Use uploadToken if available, otherwise sessionId
-  const [uploadedDocuments, setUploadedDocuments] = useState<UploadedDocument[]>([]);
-  const [uploading, setUploading] = useState(false);
+  const { sessionId } = useAppStore();
+  const [currentApplicationId, setCurrentApplicationId] = useState<string | null>(null);
+  const [documents, setDocuments] = useState<Document[]>([]);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  const loadDocuments = useCallback(async () => {
-    if (!token) return;
-    try {
-      const docs = await listDocuments(token);
-      setUploadedDocuments(docs.map((doc: any) => ({ filename: doc.filename, document_type: doc.document_type, s3_path: doc.s3_path })));
-    } catch (err) {
-      setError('Failed to load document list.');
-      console.error('Failed to load documents:', err);
+  useEffect(() => {
+    const fetchSessionData = async () => {
+      try {
+        const response = await axios.get(`/api/session/${sessionId}`);
+        if (response.data?.current_application_id) {
+          console.log('Current application ID from backend:', response.data.current_application_id);
+          setCurrentApplicationId(response.data.current_application_id);
+        } else {
+          console.log('No application ID found in session');
+          setError('No active application found. Please complete your application first.');
+        }
+      } catch (err) {
+        console.error('Failed to fetch session data:', err);
+        setError('Failed to verify application status. Please try again.');
+      }
+    };
+    
+    if (sessionId) {
+      fetchSessionData();
+    } else {
+      setError('Session not found. Please return to chat.');
     }
-  }, [token]);
+  }, [sessionId]);
 
   useEffect(() => {
-    loadDocuments();
-  }, [loadDocuments]);
+    const loadDocuments = async () => {
+      try {
+        setLoading(true);
+        if (!currentApplicationId) {
+          setError('Please complete your application first');
+          return;
+        }
+        
+        const docs = await listDocuments(currentApplicationId);
+        setDocuments(docs);
+      } catch (err) {
+        setError('Failed to load documents');
+      } finally {
+        setLoading(false);
+      }
+    };
+    if (currentApplicationId) {
+      loadDocuments();
+    }
+  }, [currentApplicationId]);
 
-  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = event.target.files;
-    if (!files || files.length === 0 || !token) return;
-
-    setUploading(true);
-    setError(null);
-    setSuccess(null);
-
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files?.length) {
+      setError('Please select a file to upload');
+      return;
+    }
+    
+    if (!currentApplicationId) {
+      setError('Please complete your application first');
+      return;
+    }
+    
     try {
-      for (const file of Array.from(files)) {
-        await uploadDocument(file, token, file.name.split('.')[0]);
-      }
-      setSuccess(`Successfully uploaded ${files.length} file(s).`);
-      await loadDocuments();
+      setLoading(true);
+      setError(null);
+      setSuccess(null);
+      
+      const file = e.target.files[0];
+      await uploadDocument(file, sessionId, currentApplicationId);
+      
+      // Refresh documents list
+      const updatedDocs = await listDocuments(currentApplicationId);
+      setDocuments(updatedDocs);
+      setSuccess('Document uploaded successfully!');
     } catch (err) {
-      setError('Failed to upload documents. Please try again.');
-      console.error('Upload error:', err);
+      setError('Failed to upload document: ' + (err as Error).message);
     } finally {
-      setUploading(false);
-      // Clear the input
-      if (event.target) {
-        event.target.value = '';
-      }
+      setLoading(false);
     }
   };
 
-  const handleDeleteDocument = async (filename: string) => {
-    if (!token) return;
+  const handleDelete = async (file_id: string) => {
+    if (!currentApplicationId) return;
     try {
-      await deleteDocument(filename, token);
-      setSuccess(`Successfully deleted ${filename}.`);
-      await loadDocuments(); // Refresh the list
+      setLoading(true);
+      await deleteDocument(file_id, currentApplicationId);
+      setSuccess('Document deleted successfully');
+      const updatedDocs = await listDocuments(currentApplicationId);
+      setDocuments(updatedDocs);
     } catch (err) {
-      setError(`Failed to delete ${filename}.`);
-      console.error('Delete error:', err);
+      setError('Failed to delete document');
+    } finally {
+      setLoading(false);
     }
   };
 
   const isDocumentUploaded = (docName: string) => {
-    const formattedDocName = docName.replace(/\s+/g, '_').toLowerCase();
-    return uploadedDocuments.some(doc => 
-      doc.document_type.toLowerCase().includes(formattedDocName)
-    );
+    return documents.some(doc => doc.name.includes(docName));
   };
 
-  if (!token) {
+  if (!currentApplicationId) {
     return (
       <Paper sx={{ p: 3, textAlign: 'center' }}>
         <Typography variant="h6" color="error">
-          Application Token Not Found
+          Application ID Required
         </Typography>
-        <Typography color="text.secondary">
-          Please go back to the chat and provide your application token to proceed.
+        <Typography>
+          Please return to the chat and provide your application ID
         </Typography>
       </Paper>
     );
@@ -124,58 +143,55 @@ const DocumentUpload: React.FC = () => {
       <Typography variant="h5" gutterBottom>
         Document Upload
       </Typography>
-      {token && (
-        <Typography color="text.secondary" gutterBottom>
-          Application ID: {uploadToken ? `HL${uploadToken.split('_')[1]}` : token}
-        </Typography>
-      )}
-      {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
-      {success && <Alert severity="success" sx={{ mb: 2 }}>{success}</Alert>}
+      <Typography color="text.secondary" gutterBottom>
+        Application ID: {currentApplicationId}
+      </Typography>
+
+      {error && <Alert severity="error">{error}</Alert>}
+      {success && <Alert severity="success">{success}</Alert>}
 
       <Grid container spacing={3}>
-        {/* Upload Area */}
         <Grid item xs={12} md={6}>
-          <Card component={Paper} elevation={2} sx={{ height: '100%' }}>
-            <CardContent sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', p: 3 }}>
-              <UploadIcon color="primary" sx={{ fontSize: 60, mb: 2 }} />
+          <Card>
+            <CardContent sx={{ textAlign: 'center' }}>
+              <UploadIcon fontSize="large" color="primary" />
               <Typography variant="h6" gutterBottom>
-                Click to Upload
+                Upload Documents
               </Typography>
               <Button
                 variant="contained"
                 component="label"
-                disabled={uploading}
-                startIcon={uploading ? <CircularProgress size={20} color="inherit" /> : null}
+                disabled={loading}
+                startIcon={loading ? <CircularProgress size={20} /> : null}
               >
-                {uploading ? 'Uploading...' : 'Select Files'}
-                <input type="file" hidden multiple onChange={handleFileUpload} />
+                {loading ? 'Uploading...' : 'Select File'}
+                <input type="file" hidden onChange={handleUpload} />
               </Button>
               <Typography variant="caption" color="text.secondary" sx={{ mt: 2 }}>
-                Supported formats: PDF, JPG, JPEG, PNG (Max 10MB per file)
+                Supported formats: PDF, JPG, JPEG, PNG
               </Typography>
             </CardContent>
           </Card>
         </Grid>
 
-        {/* Required Documents List */}
         <Grid item xs={12} md={6}>
-          <Paper elevation={2} sx={{ p: 2, height: '100%' }}>
-            <Typography variant="h6" gutterBottom>Required Documents</Typography>
-            <List dense>
+          <Paper elevation={2} sx={{ p: 2 }}>
+            <Typography variant="h6" gutterBottom>
+              Required Documents
+            </Typography>
+            <List>
               {requiredDocuments.map((doc) => (
                 <ListItem key={doc.name}>
                   <ListItemIcon>
-                    {isDocumentUploaded(doc.name) ? (
-                      <CheckIcon color="success" />
-                    ) : (
-                      <FileIcon color={doc.required ? 'error' : 'disabled'} />
-                    )}
+                    {isDocumentUploaded(doc.name) ? 
+                      <CheckIcon color="success" /> : 
+                      <FileIcon color={doc.required ? 'error' : 'disabled'} />}
                   </ListItemIcon>
-                  <ListItemText 
+                  <ListItemText
                     primary={doc.name}
                     secondary={doc.description}
                   />
-                   <Chip 
+                  <Chip
                     label={doc.required ? 'Required' : 'Optional'}
                     size="small"
                     color={doc.required ? 'primary' : 'default'}
@@ -186,17 +202,22 @@ const DocumentUpload: React.FC = () => {
           </Paper>
         </Grid>
 
-        {/* Uploaded Documents List */}
         <Grid item xs={12}>
           <Paper elevation={2} sx={{ p: 2 }}>
-            <Typography variant="h6" gutterBottom>Uploaded Files</Typography>
-            {uploadedDocuments.length > 0 ? (
-              <List dense>
-                {uploadedDocuments.map((doc) => (
+            <Typography variant="h6" gutterBottom>
+              Uploaded Documents
+            </Typography>
+            {documents.length > 0 ? (
+              <List>
+                {documents.map((doc) => (
                   <ListItem
-                    key={doc.filename}
+                    key={doc.file_id}
                     secondaryAction={
-                      <IconButton edge="end" aria-label="delete" onClick={() => handleDeleteDocument(doc.filename)}>
+                      <IconButton 
+                        edge="end" 
+                        onClick={() => handleDelete(doc.file_id)}
+                        disabled={loading}
+                      >
                         <DeleteIcon />
                       </IconButton>
                     }
@@ -204,13 +225,22 @@ const DocumentUpload: React.FC = () => {
                     <ListItemIcon>
                       <FileIcon />
                     </ListItemIcon>
-                    <ListItemText primary={doc.filename} secondary={`Type: ${doc.document_type}`} />
+                    <ListItemText
+                      primary={doc.name}
+                      secondary={
+                        <>
+                          <div>Type: {doc.type}</div>
+                          <div>Size: {(doc.size / 1024).toFixed(1)} KB</div>
+                          <div>Uploaded: {new Date(doc.last_modified).toLocaleString()}</div>
+                        </>
+                      }
+                    />
                   </ListItem>
                 ))}
               </List>
             ) : (
-              <Typography color="text.secondary" sx={{ mt: 2, textAlign: 'center' }}>
-                No documents uploaded yet.
+              <Typography color="text.secondary" sx={{ textAlign: 'center' }}>
+                No documents uploaded yet
               </Typography>
             )}
           </Paper>
